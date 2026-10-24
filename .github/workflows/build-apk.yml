@@ -70,7 +70,7 @@ jobs:
           test -f "$ROOT/app/src/main/cpp/CMakeLists.txt"
 
           echo "root=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Projeto: $ROOT"
+          echo "Projeto encontrado: $ROOT"
 
       - name: Configurar Android SDK
         shell: bash
@@ -126,7 +126,7 @@ jobs:
           test -f \
             "$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
 
-          echo "SDK, NDK e CMake preparados."
+          echo "Android SDK preparado."
 
       - name: Instalar ferramentas de compilacao
         shell: bash
@@ -134,6 +134,7 @@ jobs:
           set -euo pipefail
 
           sudo apt-get update -qq
+
           sudo apt-get install -y \
             cmake \
             ninja-build \
@@ -141,7 +142,7 @@ jobs:
             git \
             unzip
 
-      - name: Compilar FluidSynth ARM64
+      - name: Compilar FluidSynth sem GLib2
         working-directory: ${{ steps.project.outputs.root }}
         shell: bash
         run: |
@@ -153,7 +154,7 @@ jobs:
 
           git clone \
             --depth 1 \
-            --branch v2.4.6 \
+            --branch v2.5.3 \
             https://github.com/FluidSynth/fluidsynth.git \
             "$SOURCE"
 
@@ -163,10 +164,14 @@ jobs:
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=17 \
             -DBUILD_SHARED_LIBS=ON \
-            -Denable-glib=OFF \
+            -Dosal=cpp11 \
+            -Denable-libinstpatch=OFF \
+            -Denable-openmp=OFF \
             -Denable-libsndfile=OFF \
             -Denable-pulseaudio=OFF \
+            -Denable-pipewire=OFF \
             -Denable-alsa=OFF \
             -Denable-jack=OFF \
             -Denable-oss=OFF \
@@ -174,20 +179,28 @@ jobs:
             -Denable-readline=OFF \
             -Denable-dbus=OFF \
             -Denable-network=OFF \
-            -Denable-aufile=OFF
+            -Denable-aufile=OFF \
+            -Denable-ladspa=OFF \
+            -Denable-sdl3=OFF \
+            -Denable-native-dls=OFF
 
-          cmake --build "$BUILD" --parallel 2
+          cmake --build "$BUILD" \
+            --parallel 2
 
-          LIB="$(find "$BUILD" -type f \
-            -name libfluidsynth.so -print -quit)"
+          LIB="$(find "$BUILD" \
+            -type f -name libfluidsynth.so \
+            -print -quit)"
 
           if [[ -z "$LIB" || ! -s "$LIB" ]]; then
-            echo "::error::FluidSynth nao compilado."
+            echo "::error::FluidSynth nao foi compilado."
             exit 1
           fi
 
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          mkdir -p app/src/main/cpp/fluidsynth/include
+          mkdir -p \
+            app/src/main/jniLibs/arm64-v8a
+
+          mkdir -p \
+            app/src/main/cpp/fluidsynth/include
 
           cp "$LIB" \
             app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
@@ -196,9 +209,13 @@ jobs:
             app/src/main/cpp/fluidsynth/include/
 
           test -s \
+            app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
+
+          test -s \
             app/src/main/cpp/fluidsynth/include/fluidsynth.h
 
-          echo "FluidSynth ARM64 preparado."
+          echo "FluidSynth ARM64 compilado."
+          file app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
 
       - name: Compilar aplicativo Android
         working-directory: ${{ steps.project.outputs.root }}
