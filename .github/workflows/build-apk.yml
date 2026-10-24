@@ -184,15 +184,15 @@ jobs:
             -Denable-sdl3=OFF \
             -Denable-native-dls=OFF
 
-          cmake --build "$BUILD" \
-            --parallel 2
+          cmake --build "$BUILD" --parallel 2
 
-          LIB="$(find "$BUILD" \
-            -type f -name libfluidsynth.so \
-            -print -quit)"
+          echo "Verificando bibliotecas geradas:"
+          find "$BUILD" -name 'libfluidsynth*' -print
 
-          if [[ -z "$LIB" || ! -s "$LIB" ]]; then
-            echo "::error::FluidSynth nao foi compilado."
+          LIB="$BUILD/src/libfluidsynth.so"
+
+          if [[ ! -s "$LIB" ]]; then
+            echo "::error::FluidSynth nao encontrado em $LIB"
             exit 1
           fi
 
@@ -208,13 +208,13 @@ jobs:
           cp -R "$SOURCE/include/." \
             app/src/main/cpp/fluidsynth/include/
 
-          test -s \
-            app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
+          if [[ ! -s \
+            app/src/main/cpp/fluidsynth/include/fluidsynth.h ]]; then
+            echo "::error::Cabecalho FluidSynth nao encontrado."
+            exit 1
+          fi
 
-          test -s \
-            app/src/main/cpp/fluidsynth/include/fluidsynth.h
-
-          echo "FluidSynth ARM64 compilado."
+          echo "FluidSynth ARM64 preparado."
           file app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
 
       - name: Compilar aplicativo Android
