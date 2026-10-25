@@ -16,7 +16,7 @@ jobs:
   build:
     name: APK Android ARM64
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch v2.5.3 https://github.com/FluidSynth/fluidsynth.git "$RUNNER_TEMP/fluidsynth-src"
+          git clone --depth 1 --branch v2.5.3 --recurse-submodules https://github.com/FluidSynth/fluidsynth.git "$RUNNER_TEMP/fluidsynth-src"
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
           cmake -S "$RUNNER_TEMP/fluidsynth-src" -B "$RUNNER_TEMP/fluidsynth-build" \
             -G Ninja \
@@ -69,7 +69,9 @@ jobs:
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fluidsynth-install" \
-            -Denable-glib=OFF \
+            -Dosal=cpp11 \
+            -Denable-libinstpatch=OFF \
+            -Denable-native-dls=OFF \
             -Denable-libsndfile=OFF \
             -Denable-dbus=OFF \
             -Denable-pulseaudio=OFF \
@@ -81,23 +83,22 @@ jobs:
             -Denable-readline=OFF \
             -Denable-aufile=OFF \
             -Denable-floats=ON \
-            -DDEFAULT_SOUNDFONT='' \
-            -Denable-floats=ON
+            -Denable-oboe=OFF \
+            -Denable-opensles=OFF
           cmake --build "$RUNNER_TEMP/fluidsynth-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/fluidsynth-build" --component fluidsynth_development
           LIB=$(find "$RUNNER_TEMP/fluidsynth-build" -type f -name 'libfluidsynth.so' -print -quit)
           test -n "$LIB" || { echo 'libfluidsynth.so nao gerada'; exit 1; }
           mkdir -p "$PROJECT_DIR/app/src/main/jniLibs/arm64-v8a"
           cp "$LIB" "$PROJECT_DIR/app/src/main/jniLibs/arm64-v8a/libfluidsynth.so"
-          mkdir -p "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth"
-          cp "$RUNNER_TEMP/fluidsynth-src/include/fluidsynth.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/"
-          cp "$RUNNER_TEMP/fluidsynth-src/include/fluidsynth/"*.h "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/"
-          if test -f "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth/version.h"; then
-            cp "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth/version.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/"
-          fi
-          if test -f "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth.h"; then
-            cp "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/"
-          fi
-          test -f "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/version.h"
+          HEADERS="$RUNNER_TEMP/fluidsynth-install/include"
+          test -f "$HEADERS/fluidsynth.h"
+          test -f "$HEADERS/fluidsynth/version.h"
+          mkdir -p "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include"
+          cp -a "$HEADERS/." "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/"
+          CXX_RUNTIME=$(find "$NDK/toolchains/llvm/prebuilt" -path "*/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" -print -quit)
+          test -n "$CXX_RUNTIME" || { echo "Runtime C++ ARM64 ausente"; exit 1; }
+          cp "$CXX_RUNTIME" "$PROJECT_DIR/app/src/main/jniLibs/arm64-v8a/libc++_shared.so"
 
       - name: Compilar APK Debug
         shell: bash
@@ -114,6 +115,7 @@ jobs:
           test -s "$APK"
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libfluidsynth.so'
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/libsf2native.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libc++_shared.so'
           echo "APK gerado: $APK"
 
       - name: Publicar APK
