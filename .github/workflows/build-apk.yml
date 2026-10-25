@@ -1,28 +1,25 @@
 
-name: Compilar SF2 Player v0.9.5
+name: Compilar SF2 Player Fase 1
 
 on:
   workflow_dispatch:
   push:
+    branches: [main, master]
     paths:
-      - 'SF2Player_v0.9.5_ESTAVEL_AUDIO_PERSISTENTE.zip'
+      - 'SF2Player_Fase1.zip'
       - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
 
-concurrency:
-  group: sf2player-build
-  cancel-in-progress: true
-
 jobs:
   build:
-    name: Gerar APK Android ARM64
+    name: APK Android ARM64
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Baixar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configurar Java 17
@@ -31,258 +28,98 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configurar Gradle 8.13
+      - name: Configurar Android SDK e NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            'platforms;android-36' 'build-tools;35.0.0' \
+            'ndk;27.2.12479018' 'cmake;3.22.1'
+
+      - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
 
-      - name: Localizar projeto Android
-        id: project
+      - name: Extrair e localizar projeto
         shell: bash
         run: |
           set -euo pipefail
+          test -f SF2Player_Fase1.zip || { echo 'ZIP SF2Player_Fase1.zip ausente na raiz do repositorio'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/sf2-extracted"
+          unzip -q SF2Player_Fase1.zip -d "$RUNNER_TEMP/sf2-extracted"
+          PROJECT_FILE=$(find "$RUNNER_TEMP/sf2-extracted" -type f -name settings.gradle.kts -print -quit)
+          test -n "$PROJECT_FILE" || { echo 'settings.gradle.kts nao encontrado no ZIP'; exit 1; }
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          test -f "$PROJECT_DIR/app/src/main/cpp/sf2native.c"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Projeto localizado em $PROJECT_DIR"
 
-          ZIP="SF2Player_v0.9.5_ESTAVEL_AUDIO_PERSISTENTE.zip"
-          ROOT_TEMP="$RUNNER_TEMP/sf2-project"
-
-          if [[ ! -f "$ZIP" ]]; then
-            echo "::error::ZIP nao encontrado: $ZIP"
-            exit 1
-          fi
-
-          mkdir -p "$ROOT_TEMP"
-          unzip -oq "$ZIP" -d "$ROOT_TEMP"
-
-          mapfile -t FILES < <(
-            find "$ROOT_TEMP" \
-              -type f -name settings.gradle.kts
-          )
-
-          if [[ "${#FILES[@]}" -ne 1 ]]; then
-            echo "::error::Estrutura Gradle inesperada."
-            printf '%s\n' "${FILES[@]}"
-            exit 1
-          fi
-
-          ROOT="$(dirname "${FILES[0]}")"
-
-          test -f "$ROOT/app/build.gradle.kts"
-          test -f "$ROOT/app/src/main/cpp/CMakeLists.txt"
-
-          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
-          echo "Projeto encontrado: $ROOT"
-
-      - name: Configurar Android SDK
+      - name: Compilar FluidSynth 2.5.3 para ARM64
         shell: bash
         run: |
           set -euo pipefail
-
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-
-          if [[ -z "$SDK" || ! -d "$SDK" ]]; then
-            echo "::error::Android SDK nao encontrado."
-            exit 1
-          fi
-
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-
-          SDKMANAGER="$(find "$SDK/cmdline-tools" \
-            -type f -name sdkmanager \
-            -print 2>/dev/null | sort -V | tail -n 1)"
-
-          if [[ -z "$SDKMANAGER" ]]; then
-            echo "::error::sdkmanager nao encontrado."
-            exit 1
-          fi
-
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-          java -version
-          "$SDKMANAGER" --version
-
-      - name: Instalar SDK NDK e CMake
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          set +o pipefail
-          yes | "$SDKMANAGER" --licenses > /dev/null
-          LICENSE_STATUS=${PIPESTATUS[1]}
-          set -o pipefail
-
-          if [[ "$LICENSE_STATUS" -ne 0 ]]; then
-            echo "::error::Falha nas licencas Android."
-            exit 1
-          fi
-
-          "$SDKMANAGER" --install \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;27.2.12479018" \
-            "cmake;3.22.1"
-
-          test -f \
-            "$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
-
-          echo "Android SDK preparado."
-
-      - name: Instalar ferramentas de compilacao
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          sudo apt-get update -qq
-
-          sudo apt-get install -y \
-            cmake \
-            ninja-build \
-            pkg-config \
-            git \
-            unzip \
-            file
-
-      - name: Compilar FluidSynth ARM64
-        working-directory: ${{ steps.project.outputs.root }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE="$RUNNER_TEMP/fluidsynth-source"
-          BUILD="$RUNNER_TEMP/fluidsynth-build"
+          git clone --depth 1 --branch v2.5.3 https://github.com/FluidSynth/fluidsynth.git "$RUNNER_TEMP/fluidsynth-src"
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
-
-          git clone \
-            --depth 1 \
-            --branch v2.5.3 \
-            https://github.com/FluidSynth/fluidsynth.git \
-            "$SOURCE"
-
-          cmake -S "$SOURCE" -B "$BUILD" \
+          cmake -S "$RUNNER_TEMP/fluidsynth-src" -B "$RUNNER_TEMP/fluidsynth-build" \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-26 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DBUILD_SHARED_LIBS=ON \
-            -Dosal=cpp11 \
-            -Denable-libinstpatch=OFF \
-            -Denable-openmp=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/fluidsynth-install" \
+            -Denable-glib=OFF \
             -Denable-libsndfile=OFF \
+            -Denable-dbus=OFF \
             -Denable-pulseaudio=OFF \
-            -Denable-pipewire=OFF \
             -Denable-alsa=OFF \
             -Denable-jack=OFF \
             -Denable-oss=OFF \
-            -Denable-portaudio=OFF \
-            -Denable-readline=OFF \
-            -Denable-dbus=OFF \
+            -Denable-coreaudio=OFF \
             -Denable-network=OFF \
+            -Denable-readline=OFF \
             -Denable-aufile=OFF \
-            -Denable-ladspa=OFF \
-            -Denable-sdl3=OFF \
-            -Denable-native-dls=OFF
-
-          cmake --build "$BUILD" --parallel 2
-
-          LIB="$BUILD/src/libfluidsynth.so"
-
-          if [[ ! -s "$LIB" ]]; then
-            echo "::error::Biblioteca FluidSynth ausente."
-            exit 1
+            -Denable-floats=ON \
+            -DDEFAULT_SOUNDFONT='' \
+            -Denable-floats=ON
+          cmake --build "$RUNNER_TEMP/fluidsynth-build" --parallel 2
+          LIB=$(find "$RUNNER_TEMP/fluidsynth-build" -type f -name 'libfluidsynth.so' -print -quit)
+          test -n "$LIB" || { echo 'libfluidsynth.so nao gerada'; exit 1; }
+          mkdir -p "$PROJECT_DIR/app/src/main/jniLibs/arm64-v8a"
+          cp "$LIB" "$PROJECT_DIR/app/src/main/jniLibs/arm64-v8a/libfluidsynth.so"
+          mkdir -p "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth"
+          cp "$RUNNER_TEMP/fluidsynth-src/include/fluidsynth.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/"
+          cp "$RUNNER_TEMP/fluidsynth-src/include/fluidsynth/"*.h "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/"
+          if test -f "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth/version.h"; then
+            cp "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth/version.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/"
           fi
-
-          echo "Biblioteca compilada:"
-          file "$LIB"
-
-          DEST_LIB="app/src/main/jniLibs/arm64-v8a"
-          DEST_INC="app/src/main/cpp/fluidsynth/include"
-
-          mkdir -p "$DEST_LIB"
-          mkdir -p "$DEST_INC"
-
-          cp "$LIB" \
-            "$DEST_LIB/libfluidsynth.so"
-
-          echo "Copiando cabecalhos originais..."
-          cp -R "$SOURCE/include/." "$DEST_INC/"
-
-          echo "Copiando cabecalhos gerados pelo CMake..."
-          if [[ ! -s "$BUILD/include/fluidsynth.h" ]]; then
-            echo "::error::Cabecalho gerado nao encontrado."
-            find "$BUILD" -name 'fluidsynth.h' -print
-            exit 1
+          if test -f "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth.h"; then
+            cp "$RUNNER_TEMP/fluidsynth-build/include/fluidsynth.h" "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/"
           fi
+          test -f "$PROJECT_DIR/app/src/main/cpp/fluidsynth/include/fluidsynth/version.h"
 
-          cp -R "$BUILD/include/." "$DEST_INC/"
+      - name: Compilar APK Debug
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace :app:assembleDebug
 
-          echo "Verificando cabecalhos..."
-
-          test -s "$DEST_INC/fluidsynth.h"
-          test -s "$DEST_INC/fluidsynth/version.h"
-          test -s "$DEST_INC/fluidsynth/synth.h"
-          test -s "$DEST_LIB/libfluidsynth.so"
-
-          echo "Cabecalhos encontrados:"
-          find "$DEST_INC" \
-            -type f -name '*.h' | sort
-
-          echo "FluidSynth ARM64 preparado com sucesso."
-
-      - name: Compilar aplicativo Android
-        working-directory: ${{ steps.project.outputs.root }}
+      - name: Verificar bibliotecas no APK
         shell: bash
         run: |
           set -euo pipefail
-
-          gradle \
-            --no-daemon \
-            --stacktrace \
-            --max-workers=2 \
-            clean assembleDebug
-
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          if [[ ! -s "$APK" ]]; then
-            echo "::error::APK nao encontrado."
-            exit 1
-          fi
-
-          echo "APK compilado:"
-          ls -lh "$APK"
-
-      - name: Verificar bibliotecas nativas
-        working-directory: ${{ steps.project.outputs.root }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          unzip -l "$APK" > "$RUNNER_TEMP/apk-list.txt"
-
-          if ! grep -q \
-            "lib/arm64-v8a/libfluidsynth.so" \
-            "$RUNNER_TEMP/apk-list.txt"; then
-            echo "::error::FluidSynth ausente no APK."
-            exit 1
-          fi
-
-          if ! grep -q \
-            "lib/arm64-v8a/libsf2native.so" \
-            "$RUNNER_TEMP/apk-list.txt"; then
-            echo "::error::Biblioteca SF2 nativa ausente."
-            exit 1
-          fi
-
-          echo "Bibliotecas ARM64 encontradas."
+          APK="$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libfluidsynth.so'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libsf2native.so'
+          echo "APK gerado: $APK"
 
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: SF2Player-v0.9.5-ARM64
-          path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
+          name: SF2Player-Fase1-ARM64
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
