@@ -208,9 +208,12 @@ jobs:
           cp -R "$SOURCE/include/." \
             app/src/main/cpp/fluidsynth/include/
 
-          if [[ ! -s \
-            app/src/main/cpp/fluidsynth/include/fluidsynth.h ]]; then
-            echo "::error::Cabecalho FluidSynth nao encontrado."
+          HEADER="app/src/main/cpp/fluidsynth/include/fluidsynth/fluidsynth.h"
+
+          if [[ ! -s "$HEADER" ]]; then
+            echo "::error::Cabecalho FluidSynth nao encontrado em $HEADER"
+            find app/src/main/cpp/fluidsynth/include \
+              -name 'fluidsynth.h' -print
             exit 1
           fi
 
