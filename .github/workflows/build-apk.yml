@@ -46,7 +46,7 @@ jobs:
           ROOT_TEMP="$RUNNER_TEMP/sf2-project"
 
           if [[ ! -f "$ZIP" ]]; then
-            echo "::error::Arquivo ZIP nao encontrado: $ZIP"
+            echo "::error::ZIP nao encontrado: $ZIP"
             exit 1
           fi
 
@@ -112,7 +112,7 @@ jobs:
           set -o pipefail
 
           if [[ "$LICENSE_STATUS" -ne 0 ]]; then
-            echo "::error::Falha ao aceitar licencas."
+            echo "::error::Falha nas licencas Android."
             exit 1
           fi
 
@@ -140,9 +140,10 @@ jobs:
             ninja-build \
             pkg-config \
             git \
-            unzip
+            unzip \
+            file
 
-      - name: Compilar FluidSynth sem GLib2
+      - name: Compilar FluidSynth ARM64
         working-directory: ${{ steps.project.outputs.root }}
         shell: bash
         run: |
@@ -186,39 +187,49 @@ jobs:
 
           cmake --build "$BUILD" --parallel 2
 
-          echo "Verificando bibliotecas geradas:"
-          find "$BUILD" -name 'libfluidsynth*' -print
-
           LIB="$BUILD/src/libfluidsynth.so"
 
           if [[ ! -s "$LIB" ]]; then
-            echo "::error::FluidSynth nao encontrado em $LIB"
+            echo "::error::Biblioteca FluidSynth ausente."
             exit 1
           fi
 
-          mkdir -p \
-            app/src/main/jniLibs/arm64-v8a
+          echo "Biblioteca compilada:"
+          file "$LIB"
 
-          mkdir -p \
-            app/src/main/cpp/fluidsynth/include
+          DEST_LIB="app/src/main/jniLibs/arm64-v8a"
+          DEST_INC="app/src/main/cpp/fluidsynth/include"
+
+          mkdir -p "$DEST_LIB"
+          mkdir -p "$DEST_INC"
 
           cp "$LIB" \
-            app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
+            "$DEST_LIB/libfluidsynth.so"
 
-          cp -R "$SOURCE/include/." \
-            app/src/main/cpp/fluidsynth/include/
+          echo "Copiando cabecalhos originais..."
+          cp -R "$SOURCE/include/." "$DEST_INC/"
 
-          HEADER="app/src/main/cpp/fluidsynth/include/fluidsynth/fluidsynth.h"
-
-          if [[ ! -s "$HEADER" ]]; then
-            echo "::error::Cabecalho FluidSynth nao encontrado em $HEADER"
-            find app/src/main/cpp/fluidsynth/include \
-              -name 'fluidsynth.h' -print
+          echo "Copiando cabecalhos gerados pelo CMake..."
+          if [[ ! -s "$BUILD/include/fluidsynth.h" ]]; then
+            echo "::error::Cabecalho gerado nao encontrado."
+            find "$BUILD" -name 'fluidsynth.h' -print
             exit 1
           fi
 
-          echo "FluidSynth ARM64 preparado."
-          file app/src/main/jniLibs/arm64-v8a/libfluidsynth.so
+          cp -R "$BUILD/include/." "$DEST_INC/"
+
+          echo "Verificando cabecalhos..."
+
+          test -s "$DEST_INC/fluidsynth.h"
+          test -s "$DEST_INC/fluidsynth/version.h"
+          test -s "$DEST_INC/fluidsynth/synth.h"
+          test -s "$DEST_LIB/libfluidsynth.so"
+
+          echo "Cabecalhos encontrados:"
+          find "$DEST_INC" \
+            -type f -name '*.h' | sort
+
+          echo "FluidSynth ARM64 preparado com sucesso."
 
       - name: Compilar aplicativo Android
         working-directory: ${{ steps.project.outputs.root }}
@@ -239,7 +250,7 @@ jobs:
             exit 1
           fi
 
-          echo "APK compilado."
+          echo "APK compilado:"
           ls -lh "$APK"
 
       - name: Verificar bibliotecas nativas
